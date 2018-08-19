@@ -1,0 +1,261 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <script src="jquery.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow-x: hidden;
+    }
+
+    .prototype-container {
+      position: absolute;
+      height: 100%;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .prototype-container ::-webkit-scrollbar {
+      display: none;
+    }
+
+    .artboard {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      opacity: 0;
+      display: none;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, .12);
+      overflow: hidden;
+    }
+
+    .artboard.is-active {
+      opacity: 1;
+      display: block;
+    }
+
+    .artboard-scroll-container,
+    .artboard-fixed-container {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      bottom: 0;
+    }
+
+    .artboard-fixed-container {
+      pointer-events: none;
+    }
+
+    .artboard-scroll-container {
+      overflow: scroll;
+    }
+
+    .artboard-content {
+      position: absolute;
+      left: 0;
+      top: 0;
+      background-size: contain;
+    }
+
+    .hotspot {
+      cursor: pointer;
+      position: absolute;
+      opacity: 0;
+    }
+
+    body[can-show-hotspots] .hotspot {
+      background-color: rgba(239, 108, 0, .2);
+      box-shadow:
+          0 0 0 3px rgba(239, 108, 0, .5) inset,
+          0 4px 8px rgba(239, 108, 0, .25);
+    }
+
+    .highlight-hotspots .hotspot {
+      animation: hotspotAnimation .6s ease;
+    }
+
+    @keyframes hotspotAnimation {
+      0% {
+        opacity: 0;
+      }
+      50% {
+        opacity: 1;
+      }
+      100% {
+        opacity: 0;
+      }
+    }
+  </style>
+</head>
+<body can-show-hotspots>
+
+  <div class="prototype-container">
+  </div>
+
+  <script>
+
+    class Proto {
+      constructor(prototypeData) {
+        this.prototypeData = prototypeData;
+        this.buildUi();
+      }
+
+      buildUi() {
+        this.buildArtboards();
+
+        if (this.prototypeData.title) {
+          document.title = this.prototypeData.title;
+        }
+
+        $(window).on('hashchange', () => {
+          this.setArtboardVisible(this.getUrlInfo().artboardId);
+        });
+
+        $(document).click(() => {
+          if (this.shouldSuppressHotspotReveal_) {
+            return;
+          }
+
+          $(document.body).removeClass('highlight-hotspots');
+          let f = document.body.offsetWidth;
+          $(document.body).addClass('highlight-hotspots');
+        });
+
+        $(window).on('resize', () => this.resize());
+
+        this.setArtboardVisible(this.getUrlInfo().artboardId);
+      }
+
+      resize() {
+        let width = this.startArtboard.viewportWidth || this.startArtboard.width;
+        let height = this.startArtboard.viewportHeight || this.startArtboard.height;
+        if (this.currentArtboard.viewportWidth && this.currentArtboard.viewportHeight) {
+          width = this.currentArtboard.viewportWidth;
+          height = this.currentArtboard.viewportHeight;
+        }
+
+        let xScale = window.innerHeight / height;
+        let yScale = window.innerWidth / width;
+        $('.prototype-container')
+            .css({
+              width: width,
+              height: height,
+              zoom: Math.min(1, Math.min(xScale, yScale)),
+            });
+      }
+
+      getUrlInfo() {
+        let hash = window.location.hash;
+
+        return {
+          artboardId: hash ? hash.substring(1) : this.prototypeData.flowStartArtboardId,
+        };
+      }
+
+      buildArtboards() {
+        Object.keys(this.prototypeData.artboards).forEach(id => {
+          let artboardData = this.prototypeData.artboards[id];
+          let $artboard = $('<div>')
+              .addClass('artboard')
+              .attr('data-artboard-id', id)
+              .appendTo('.prototype-container');
+
+          // add scrollable content
+          let $artboardScrollContainer = $('<div>')
+              .addClass('artboard-scroll-container')
+              .appendTo($artboard);
+          let $artboardScrollableContent = $('<div>')
+              .addClass('artboard-content')
+              .css({
+                backgroundImage: `url(${id}.png)`,
+                width: artboardData.width,
+                height: artboardData.height,
+              })
+              .appendTo($artboardScrollContainer);
+
+          // add fixed content
+          if (artboardData.hasFixedLayers) {
+            let $artboardFixedContainer = $('<div>')
+                .addClass('artboard-fixed-container')
+                .appendTo($artboard);
+            let $artboardFixedContent = $('<div>')
+                .addClass('artboard-content')
+                .css({
+                  backgroundImage: `url(${id}_fixed.png)`,
+                  width: artboardData.width,
+                  height: artboardData.height,
+                })
+                .appendTo($artboardFixedContainer);
+          }
+
+          if (id == this.prototypeData.flowStartArtboardId) {
+            // this is the start artboard
+            this.startArtboard = artboardData;
+            this.currentArtboard = artboardData;
+          }
+
+          artboardData.hotspots.forEach(hotspotData => {
+            let $hotspot = $('<div>')
+              .addClass('hotspot')
+              .attr('data-artboard-id', id)
+              .css({
+                left: hotspotData.rectangle.x,
+                top: hotspotData.rectangle.y,
+                width: hotspotData.rectangle.width,
+                height: hotspotData.rectangle.height,
+              })
+              .appendTo(hotspotData.isFixed
+                  ? $artboard // don't add to $artboardFixedContent because of pointer-events:none
+                  : $artboardScrollableContent);
+            $hotspot.click(event => {
+              this.gotoTarget(hotspotData.target)
+              event.stopPropagation();
+            });
+          });
+        });
+      }
+
+      gotoTarget(target) {
+        if (target == 'back') {
+          history.back();
+          return;
+        }
+
+        this.gotoArtboard(target);
+      }
+
+      gotoArtboard(artboardId) {
+        window.location.href= '#' + artboardId;
+      }
+
+      setArtboardVisible(artboardId) {
+        this.currentArtboard = this.prototypeData.artboards[artboardId];
+
+        $('.artboard-scroll-container').scrollLeft(0).scrollTop(0);
+
+        $(document.body).removeClass('highlight-hotspots');
+        $('.artboard').removeClass('is-active');
+        $(`.artboard[data-artboard-id="${artboardId}"]`).addClass('is-active');
+
+        this.resize();
+      }
+    }
+
+  </script>
+  <script>
+    new Proto(
+      {"title":"Homespaces","flowStartArtboardId":"761DBEE9-4901-440D-B968-7FA58893C6C2","artboards":{"761DBEE9-4901-440D-B968-7FA58893C6C2":{"title":"Initial Screen","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":42,"y":566,"width":276,"height":58},"target":"37DDC662-5A21-4B9F-80A2-A560B3D7A1AE"}],"hasFixedLayers":false},"37DDC662-5A21-4B9F-80A2-A560B3D7A1AE":{"title":"Account Creation #1","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":0,"y":449,"width":360,"height":248},"target":"27E82641-2E88-4CBA-839C-851E51C58E0F"}],"hasFixedLayers":false},"27E82641-2E88-4CBA-839C-851E51C58E0F":{"title":"Account Creation #2","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":0,"y":449,"width":360,"height":248},"target":"71C4A787-A739-4809-BF21-23F448C052F1"}],"hasFixedLayers":false},"71C4A787-A739-4809-BF21-23F448C052F1":{"title":"Account Creation #3","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":0,"y":449,"width":360,"height":248},"target":"02D2CCAC-80A3-4847-9E8B-C97D6BD6E35B"}],"hasFixedLayers":false},"02D2CCAC-80A3-4847-9E8B-C97D6BD6E35B":{"title":"Load Screen","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":42,"y":586,"width":276,"height":58},"target":"F4667C4D-2381-48E5-BA83-74B68C27CD46"}],"hasFixedLayers":false},"F4667C4D-2381-48E5-BA83-74B68C27CD46":{"title":"Search Screen","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":240,"y":105,"width":120,"height":16},"target":"ABD98B84-FBC3-4453-A0A4-1ED5BF5CA9F4"},{"rectangle":{"x":120,"y":105,"width":120,"height":16},"target":"110184AB-4A95-4BBA-AE1C-F3157CA21D7F"},{"rectangle":{"x":9,"y":32,"width":343,"height":48},"target":"C4983EB1-1964-4EBA-8F53-AC7B3C1B7733"},{"rectangle":{"x":8,"y":146,"width":344,"height":334},"target":"75C1544A-53AA-454F-A897-4DA5CA404936"}],"hasFixedLayers":false},"ABD98B84-FBC3-4453-A0A4-1ED5BF5CA9F4":{"title":"Dashboard","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":240,"y":105,"width":120,"height":16},"target":"110184AB-4A95-4BBA-AE1C-F3157CA21D7F"},{"rectangle":{"x":120,"y":105,"width":120,"height":16},"target":"110184AB-4A95-4BBA-AE1C-F3157CA21D7F"},{"rectangle":{"x":0,"y":105,"width":120,"height":16},"target":"F4667C4D-2381-48E5-BA83-74B68C27CD46"},{"rectangle":{"x":9,"y":32,"width":343,"height":48},"target":"C4983EB1-1964-4EBA-8F53-AC7B3C1B7733"},{"rectangle":{"x":0,"y":566,"width":360,"height":72},"target":"761DBEE9-4901-440D-B968-7FA58893C6C2"}],"hasFixedLayers":false},"110184AB-4A95-4BBA-AE1C-F3157CA21D7F":{"title":"Dashboard Copy","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":240,"y":105,"width":120,"height":16},"target":"ABD98B84-FBC3-4453-A0A4-1ED5BF5CA9F4"},{"rectangle":{"x":120,"y":105,"width":120,"height":16},"target":"110184AB-4A95-4BBA-AE1C-F3157CA21D7F"},{"rectangle":{"x":0,"y":105,"width":120,"height":16},"target":"F4667C4D-2381-48E5-BA83-74B68C27CD46"},{"rectangle":{"x":9,"y":32,"width":343,"height":48},"target":"C4983EB1-1964-4EBA-8F53-AC7B3C1B7733"}],"hasFixedLayers":false},"C4983EB1-1964-4EBA-8F53-AC7B3C1B7733":{"title":"Map View","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":240,"y":105,"width":120,"height":16},"target":"ABD98B84-FBC3-4453-A0A4-1ED5BF5CA9F4"},{"rectangle":{"x":120,"y":105,"width":120,"height":16},"target":"110184AB-4A95-4BBA-AE1C-F3157CA21D7F"},{"rectangle":{"x":315,"y":181,"width":22,"height":22},"target":"75C1544A-53AA-454F-A897-4DA5CA404936"}],"hasFixedLayers":false},"75C1544A-53AA-454F-A897-4DA5CA404936":{"title":"Individual Room","width":360,"height":740,"viewportWidth":360,"viewportHeight":740,"hotspots":[{"rectangle":{"x":240,"y":105,"width":120,"height":16},"target":"ABD98B84-FBC3-4453-A0A4-1ED5BF5CA9F4"},{"rectangle":{"x":120,"y":105,"width":120,"height":16},"target":"110184AB-4A95-4BBA-AE1C-F3157CA21D7F"},{"rectangle":{"x":0,"y":105,"width":120,"height":16},"target":"F4667C4D-2381-48E5-BA83-74B68C27CD46"},{"rectangle":{"x":9,"y":32,"width":343,"height":48},"target":"C4983EB1-1964-4EBA-8F53-AC7B3C1B7733"}],"hasFixedLayers":false}}}
+    );
+  </script>
+
+</body>
+</html>
